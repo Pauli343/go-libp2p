@@ -6,7 +6,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/network"
+
 	ws "github.com/gorilla/websocket"
+	"github.com/libp2p/go-libp2p/core/transport"
 )
 
 // GracefulCloseTimeout is the time to wait trying to gracefully close a
@@ -148,4 +151,14 @@ func (c *Conn) SetWriteDeadline(t time.Time) error {
 	defer c.writeLock.Unlock()
 
 	return c.Conn.SetWriteDeadline(t)
+}
+
+type capableConn struct {
+	transport.CapableConn
+}
+
+func (c *capableConn) ConnState() network.ConnectionState {
+	cs := c.CapableConn.ConnState()
+	cs.Transport = "websocket"
+	return cs
 }
