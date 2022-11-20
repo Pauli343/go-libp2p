@@ -1,4 +1,4 @@
-package muxer_negotiation
+package negotiation
 
 import (
 	"context"

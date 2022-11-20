@@ -193,10 +193,10 @@ func (cfg *Config) addTransports(h host.Host) error {
 		fxopts = append(fxopts,
 			fx.Provide(
 				fx.Annotate(
-					func(id peer.ID, priv crypto.PrivKey) sec.SecureTransport {
-						return insecure.NewWithIdentity(insecure.ID, id, priv)
+					func(id peer.ID, priv crypto.PrivKey) []sec.SecureTransport {
+						return []sec.SecureTransport{insecure.NewWithIdentity(insecure.ID, id, priv)}
 					},
-					fx.ResultTags(`group:"security"`),
+					fx.ResultTags(`name:"security"`),
 				),
 			),
 		)
