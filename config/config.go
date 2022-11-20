@@ -2,6 +2,7 @@ package config
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/pnet"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/core/sec"
 	"github.com/libp2p/go-libp2p/core/sec/insecure"
@@ -53,6 +55,11 @@ type AutoNATConfig struct {
 	ThrottleInterval    time.Duration
 }
 
+type Security struct {
+	ID          protocol.ID
+	Constructor interface{}
+}
+
 // Config describes a set of settings for a libp2p node
 //
 // This is *not* a stable interface. Use the options defined in the root
@@ -73,7 +80,7 @@ type Config struct {
 
 	Transports         []fx.Option
 	Muxers             []tptu.StreamMuxer
-	SecurityTransports []fx.Option
+	SecurityTransports []Security
 	Insecure           bool
 	PSK                pnet.PSK
 
@@ -171,7 +178,7 @@ func (cfg *Config) addTransports(h host.Host) error {
 
 	fxopts := []fx.Option{
 		fx.WithLogger(func() fxevent.Logger { return getFXLogger() }),
-		fx.Provide(fx.Annotate(tptu.New, fx.ParamTags(`group:"security"`))),
+		fx.Provide(fx.Annotate(tptu.New, fx.ParamTags(`name:"security"`))),
 		fx.Supply(cfg.Muxers),
 		fx.Supply(h.ID()),
 		fx.Provide(func() host.Host { return h }),
@@ -194,7 +201,42 @@ func (cfg *Config) addTransports(h host.Host) error {
 			),
 		)
 	} else {
-		fxopts = append(fxopts, cfg.SecurityTransports...)
+		// fx groups are unordered, but we need to preserve the order of the security transports
+		// First of all, we construct the security transports that are needed,
+		// and save them to a group call security_unordered.
+		for _, s := range cfg.SecurityTransports {
+			fxName := fmt.Sprintf(`name:"security_%s"`, s.ID)
+			fxopts = append(fxopts, fx.Supply(fx.Annotate(s.ID, fx.ResultTags(fxName))))
+			fxopts = append(fxopts,
+				fx.Provide(fx.Annotate(
+					s.Constructor,
+					fx.ParamTags(fxName),
+					fx.As(new(sec.SecureTransport)),
+					fx.ResultTags(`group:"security_unordered"`),
+				)),
+			)
+		}
+		// Then we consume the group security_unordered, and order them by the user's preference.
+		fxopts = append(fxopts, fx.Provide(
+			fx.Annotate(
+				func(secs []sec.SecureTransport) ([]sec.SecureTransport, error) {
+					if len(secs) != len(cfg.SecurityTransports) {
+						return nil, errors.New("inconsistent length for security transports")
+					}
+					t := make([]sec.SecureTransport, 0, len(secs))
+					for _, s := range cfg.SecurityTransports {
+						for _, st := range secs {
+							if s.ID != st.ID() {
+								continue
+							}
+							t = append(t, st)
+						}
+					}
+					return t, nil
+				},
+				fx.ParamTags(`group:"security_unordered"`),
+				fx.ResultTags(`name:"security"`),
+			)))
 	}
 
 	fxopts = append(fxopts, fx.Invoke(
